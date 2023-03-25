@@ -24,48 +24,37 @@ class QGAN:
 
         # Define the QNodes
         @qml.qnode(dev)
-        def generator_qnode(inputs: np.ndarray, weights: np.ndarray) -> float:
-            ''' Define the quantum circuit for the generator.
-
-            Args:
-                inputs (np.ndarray): Input noise for the generator.
-                weights (np.ndarray): Weights for the generator circuit.
-
-            Returns:
-                float: The expectation value of the PauliZ operator on the first qubit.
-            '''
-            qgan.qgan_generator(inputs, weights)
-            return qml.expval(PauliZ(0))
+        def generator_qnode(inputs: np.ndarray, weights: np.ndarray) -> Tuple[float, float]:
+            self.qgan_generator(inputs, weights)
+            return qml.expval(PauliZ(0)), qml.expval(PauliZ(1))
 
         @qml.qnode(dev)
-        def discriminator_qnode(inputs, weights):
-            return self.qgan_discriminator(inputs, weights)
+        def discriminator_qnode(inputs: np.ndarray, weights: np.ndarray) -> float:
+            self.qgan_discriminator(inputs, weights)
+            return qml.expval(PauliZ(0))
 
         self.generator_qnode = generator_qnode
         self.discriminator_qnode = discriminator_qnode
 
-    def qgan_generator(self, weights: np.ndarray, noise: np.ndarray) -> np.ndarray:
+    def qgan_generator(self, inputs: np.ndarray, weights_g: np.ndarray) -> np.ndarray:
         ''' Define the quantum circuit for the generator.
 
         Args:
-            weights (np.ndarray): Weights for the generator circuit.
-            noise (np.ndarray): Noise input for the generator.
+            inputs (np.ndarray): Input noise for the generator.
+            weights_g (np.ndarray): Weights for the generator circuit.
 
         Returns:
             np.ndarray: A sample from the output of the generator circuit.
         '''
-        # Combine the weights and noise to create the input for AngleEmbedding
-        combined_input = np.concatenate((weights.flatten(), noise.flatten()))
-
-        # Apply AngleEmbedding to encode the combined_input as rotation angles for qubits 0 and 1
-        AngleEmbedding(combined_input[:2], wires=[0, 1])
+        # Apply AngleEmbedding to encode the inputs as rotation angles for qubits 0 and 1
+        AngleEmbedding(inputs[:2], wires=[0, 1])
 
         # Apply BasicEntanglerLayers and StronglyEntanglingLayers using the weights
-        BasicEntanglerLayers(weights[:2].reshape(1, -1, 2), wires=[0, 1])
-        StronglyEntanglingLayers(weights[2:].reshape(1, -1, 2), wires=[0, 1])
+        BasicEntanglerLayers(weights_g[:2].reshape(1, -1, 2), wires=[0, 1])
+        StronglyEntanglingLayers(weights_g[2:].reshape(self.num_layers-2, 2, 3), wires=[0, 1])
 
-        # Measure the first qubit in the Pauli-Z basis and return a sample from the output of the generator circuit
-        return qml.sample(PauliZ(0))
+        # Measure the first qubit in the Pauli-Z basis
+        return qml.expval(PauliZ(0))
 
     def qgan_discriminator(self, inputs: np.ndarray, weights: np.ndarray) -> float:
         ''' Define the quantum circuit for the discriminator.
