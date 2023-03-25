@@ -5,16 +5,17 @@ from pennylane.templates import BasicEntanglerLayers
 from pennylane.templates import StronglyEntanglingLayers
 from pennylane.ops import PauliZ
 
+from typing import Tuple
+
 class QGAN:
     def __init__(self, dev: qml.device, num_layers: int, step_size: float):
-        """
-        Initialize the QGAN object.
+        ''' Initialize the QGAN object.
 
         Args:
             dev (qml.device): Quantum device to run the circuits.
             num_layers (int): Number of layers for the generator and discriminator circuits.
             step_size (float): Step size for the gradient descent optimizer.
-        """
+        '''
         self.dev = dev
         self.num_layers = num_layers
         self.step_size = step_size
@@ -23,8 +24,18 @@ class QGAN:
 
         # Define the QNodes
         @qml.qnode(dev)
-        def generator_qnode(weights, noise):
-            return self.qgan_generator(weights, noise)
+        def generator_qnode(inputs: np.ndarray, weights: np.ndarray) -> float:
+            ''' Define the quantum circuit for the generator.
+
+            Args:
+                inputs (np.ndarray): Input noise for the generator.
+                weights (np.ndarray): Weights for the generator circuit.
+
+            Returns:
+                float: The expectation value of the PauliZ operator on the first qubit.
+            '''
+            qgan.qgan_generator(inputs, weights)
+            return qml.expval(PauliZ(0))
 
         @qml.qnode(dev)
         def discriminator_qnode(inputs, weights):
@@ -34,8 +45,7 @@ class QGAN:
         self.discriminator_qnode = discriminator_qnode
 
     def qgan_generator(self, weights: np.ndarray, noise: np.ndarray) -> np.ndarray:
-        """
-        Define the quantum circuit for the generator.
+        ''' Define the quantum circuit for the generator.
 
         Args:
             weights (np.ndarray): Weights for the generator circuit.
@@ -43,24 +53,22 @@ class QGAN:
 
         Returns:
             np.ndarray: A sample from the output of the generator circuit.
-        """
+        '''
         # Combine the weights and noise to create the input for AngleEmbedding
-        combined_input = np.concatenate((weights.flatten(), noise))
+        combined_input = np.concatenate((weights.flatten(), noise.flatten()))
 
         # Apply AngleEmbedding to encode the combined_input as rotation angles for qubits 0 and 1
         AngleEmbedding(combined_input[:2], wires=[0, 1])
 
         # Apply BasicEntanglerLayers and StronglyEntanglingLayers using the weights
-        BasicEntanglerLayers(weights[:, :, :2], wires=[0, 1])
-        StronglyEntanglingLayers(weights, wires=[0, 1])
+        BasicEntanglerLayers(weights[:2].reshape(1, -1, 2), wires=[0, 1])
+        StronglyEntanglingLayers(weights[2:].reshape(1, -1, 2), wires=[0, 1])
 
         # Measure the first qubit in the Pauli-Z basis and return a sample from the output of the generator circuit
         return qml.sample(PauliZ(0))
 
-
     def qgan_discriminator(self, inputs: np.ndarray, weights: np.ndarray) -> float:
-        """
-        Define the quantum circuit for the discriminator.
+        ''' Define the quantum circuit for the discriminator.
 
         Args:
             inputs (np.ndarray): Input data for the discriminator.
@@ -68,7 +76,11 @@ class QGAN:
 
         Returns:
             float: The expectation value of the PauliZ operator on the first qubit.
-        """
+        '''
+        # Ensure the input data is a one-dimensional array
+        if inputs.ndim == 0:
+            inputs = np.array([inputs])
+
         # Pad the input data with zeros to match the required length for AmplitudeEmbedding
         padded_inputs = np.pad(inputs, (0, 4 - len(inputs)), mode='constant')
 
@@ -77,42 +89,41 @@ class QGAN:
         StronglyEntanglingLayers(weights, wires=[0, 1])
         return qml.expval(PauliZ(0))
 
-    def qgan_cost(self, weights_g: np.ndarray, weights_d: np.ndarray, noise: np.ndarray, real_samples: np.ndarray) -> tuple:
-        """
-        Calculate the generator and discriminator losses.
-
+    def qgan_cost(self, weights_g: np.ndarray, weights_d: np.ndarray, inputs: np.ndarray, real_samples: np.ndarray) -> Tuple[float, float]:
+        ''' Define the cost function for the Quantum Generative Adversarial Network (QGAN).
+        
         Args:
-            weights_g (np.ndarray): Generator weights.
-            weights_d (np.ndarray): Discriminator weights.
-            noise (np.ndarray): Noise input for the generator.
-            real_samples (np.ndarray): Real data samples.
+            weights_g (np.ndarray): Weights for the generator circuit.
+            weights_d (np.ndarray): Weights for the discriminator circuit.
+            inputs (np.ndarray): Input noise for the generator.
+            real_samples (np.ndarray): Real samples from the target distribution.
 
         Returns:
-            tuple: A tuple containing the generator loss and the discriminator loss.
-        """
-        fake_samples = []
-        for i in range(len(real_samples)):
-            fake_samples.append(self.qgan_generator(weights_g, noise[i]))
-        fake_samples = np.array(fake_samples)
+            Tuple[float, float]: The generator loss and the discriminator loss.
+        '''
 
+        # Generate fake samples
+        fake_samples = np.array([self.generator_qnode(sample, weights_g) for sample in inputs], dtype=float)
+
+        # Calculate discriminator outputs for real and fake samples
         real_discriminator_outputs = np.array([self.discriminator_qnode(sample, weights_d) for sample in real_samples], dtype=float)
         fake_discriminator_outputs = np.array([self.discriminator_qnode(sample, weights_d) for sample in fake_samples], dtype=float)
 
-        d_loss = np.mean(real_discriminator_outputs) - np.mean(fake_discriminator_outputs)
-        g_loss = -np.mean(fake_discriminator_outputs)
+        # Calculate the generator and discriminator losses
+        g_loss = -np.mean(np.log(fake_discriminator_outputs))
+        d_loss = -np.mean(np.log(real_discriminator_outputs) + np.log(1 - fake_discriminator_outputs))
 
         return g_loss, d_loss
 
 
     def train_qgan(self, real_samples: np.ndarray, num_epochs: int, batch_size: int):
-        """
-        Train the QGAN using the provided real data samples, number of epochs, and batch size.
+        ''' Train the QGAN using the provided real data samples, number of epochs, and batch size.
 
         Args:
             real_samples (np.ndarray): Real data samples.
             num_epochs (int): Number of epochs for training.
             batch_size (int): Size of the batch for each training iteration.
-        """
+        '''
         optimizer = qml.GradientDescentOptimizer(self.step_size)
         for i in range(num_epochs):
             noise = np.random.normal(size=(batch_size, 2))
