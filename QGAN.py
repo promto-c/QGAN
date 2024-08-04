@@ -1,8 +1,5 @@
 import pennylane as qml
 from pennylane import numpy as np
-from pennylane.templates import AmplitudeEmbedding, AngleEmbedding
-from pennylane.templates import BasicEntanglerLayers
-from pennylane.templates import StronglyEntanglingLayers
 from pennylane.ops import PauliZ
 
 from typing import Tuple
@@ -47,11 +44,11 @@ class QGAN:
             np.ndarray: A sample from the output of the generator circuit.
         '''
         # Apply AngleEmbedding to encode the inputs as rotation angles for qubits 0 and 1
-        AngleEmbedding(inputs[:2], wires=[0, 1])
+        qml.AngleEmbedding(inputs[:2], wires=[0, 1])
 
         # Apply BasicEntanglerLayers and StronglyEntanglingLayers using the weights
-        BasicEntanglerLayers(weights_g[:2].reshape(1, -1, 2), wires=[0, 1])
-        StronglyEntanglingLayers(weights_g[2:].reshape(self.num_layers-2, 2, 3), wires=[0, 1])
+        qml.BasicEntanglerLayers(weights_g[:2].reshape(1, -1, 2), wires=[0, 1])
+        qml.StronglyEntanglingLayers(weights_g[2:].reshape(self.num_layers-2, 2, 3), wires=[0, 1])
 
         # Measure the first qubit in the Pauli-Z basis
         return qml.expval(PauliZ(0))
@@ -73,9 +70,9 @@ class QGAN:
         # Pad the input data with zeros to match the required length for AmplitudeEmbedding
         padded_inputs = np.pad(inputs, (0, 4 - len(inputs)), mode='constant')
 
-        AmplitudeEmbedding(padded_inputs, wires=[0, 1], normalize=True)
-        BasicEntanglerLayers(weights[:, :, :2], wires=[0, 1])
-        StronglyEntanglingLayers(weights, wires=[0, 1])
+        qml.AmplitudeEmbedding(padded_inputs, wires=[0, 1], normalize=True)
+        qml.BasicEntanglerLayers(weights[:, :, :2], wires=[0, 1])
+        qml.StronglyEntanglingLayers(weights, wires=[0, 1])
         return qml.expval(PauliZ(0))
 
     def qgan_cost(self, weights_g: np.ndarray, weights_d: np.ndarray, inputs: np.ndarray, real_samples: np.ndarray) -> Tuple[float, float]:
